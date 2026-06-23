@@ -12,7 +12,7 @@
       "path": ".tasks/per-folder-resource-toggling/packages/WP1.md",
       "proof_path": ".tasks/per-folder-resource-toggling/proofs/WP1.proof.md",
       "report_path": ".tasks/per-folder-resource-toggling/reports/WP1.package-verification.md",
-      "status": "pending",
+      "status": "done",
       "depends_on": []
     },
     {
@@ -21,7 +21,9 @@
       "proof_path": ".tasks/per-folder-resource-toggling/proofs/WP2.proof.md",
       "report_path": ".tasks/per-folder-resource-toggling/reports/WP2.package-verification.md",
       "status": "pending",
-      "depends_on": ["WP1"]
+      "depends_on": [
+        "WP1"
+      ]
     },
     {
       "id": "WP3",
@@ -29,7 +31,9 @@
       "proof_path": ".tasks/per-folder-resource-toggling/proofs/WP3.proof.md",
       "report_path": ".tasks/per-folder-resource-toggling/reports/WP3.package-verification.md",
       "status": "pending",
-      "depends_on": ["WP1"]
+      "depends_on": [
+        "WP1"
+      ]
     },
     {
       "id": "WP4",
@@ -37,7 +41,11 @@
       "proof_path": ".tasks/per-folder-resource-toggling/proofs/WP4.proof.md",
       "report_path": ".tasks/per-folder-resource-toggling/reports/WP4.package-verification.md",
       "status": "pending",
-      "depends_on": ["WP1", "WP2", "WP3"]
+      "depends_on": [
+        "WP1",
+        "WP2",
+        "WP3"
+      ]
     }
   ]
 }
