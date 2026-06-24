@@ -12,6 +12,12 @@ import {
   parseSkillCliOverrides,
   type SkillCliOverrides,
 } from './skills.ts';
+import {
+  applyDisabledExtensionSuppression,
+  handleDisabledExtensionCommandInvocation,
+  resetExtensionSuppressionForTests,
+  type ExtensionIntrospectionApi,
+} from './extensions.ts';
 
 export type ResourceDiscoverReason = 'startup' | 'reload' | string;
 
@@ -36,7 +42,7 @@ export interface InputEvent {
   source?: string;
 }
 
-export interface PiExtensionApi {
+export interface PiExtensionApi extends ExtensionIntrospectionApi {
   on?(event: 'session_start', handler: (event: SessionStartEvent) => Promise<void> | void): void;
   on?(event: 'resources_discover', handler: (event: ResourceDiscoverEvent, ctx?: ToggleContext) => Promise<object> | object): void;
   on?(event: 'before_agent_start', handler: (event: BeforeAgentStartEvent, ctx: ToggleContext) => Promise<object | void> | object | void): void;
@@ -63,14 +69,18 @@ export function getResourceToggleState(): ResourceToggleState {
   };
 }
 
-export async function refreshResourceToggleState(ctx: ToggleContext): Promise<ResourceToggleState> {
+export async function refreshResourceToggleState(ctx: ToggleContext, pi?: ExtensionIntrospectionApi): Promise<ResourceToggleState> {
   currentToggleState = await loadResourceToggleState(ctx);
+  if (pi) {
+    await applyDisabledExtensionSuppression(pi, currentToggleState);
+  }
   return getResourceToggleState();
 }
 
 export function resetResourceToggleStateForTests(): void {
   currentToggleState = createEmptyToggleState();
   currentCliOverrides = parseSkillCliOverrides({ argv: [] });
+  resetExtensionSuppressionForTests();
 }
 
 export function setSkillCliOverridesForTests(overrides: SkillCliOverrides): void {
@@ -80,11 +90,11 @@ export function setSkillCliOverridesForTests(overrides: SkillCliOverrides): void
 export default function perFolderResourceToggling(pi: PiExtensionApi): void {
   currentCliOverrides = parseSkillCliOverrides();
   registerPiEvent(pi, 'session_start', async (event: SessionStartEvent, ctx?: ToggleContext) => {
-    await refreshResourceToggleState(resolveToggleContext(event, ctx));
+    await refreshResourceToggleState(resolveToggleContext(event, ctx), pi);
   });
 
   registerPiEvent(pi, 'resources_discover', async (event: ResourceDiscoverEvent, ctx?: ToggleContext) => {
-    const state = await refreshResourceToggleState(resolveToggleContext(event, ctx));
+    const state = await refreshResourceToggleState(resolveToggleContext(event, ctx), pi);
     const skillPaths = getEnabledSkillPaths(state, { cli: currentCliOverrides });
     return skillPaths.length > 0 ? { skillPaths } : {};
   });
@@ -103,7 +113,12 @@ export default function perFolderResourceToggling(pi: PiExtensionApi): void {
       return { action: 'continue' };
     }
 
-    return handleDisabledSkillInvocation(event, ctx, currentToggleState, { cli: currentCliOverrides });
+    const skillResult = await handleDisabledSkillInvocation(event, ctx, currentToggleState, { cli: currentCliOverrides });
+    if (skillResult.action === 'handled') {
+      return skillResult;
+    }
+
+    return handleDisabledExtensionCommandInvocation(event, ctx, pi, currentToggleState);
   });
 }
 
@@ -135,6 +150,20 @@ function registerPiEvent(
     pi.events.on(eventName as never, handler as never);
   }
 }
+
+export {
+  applyDisabledExtensionSuppression,
+  classifyExtensionSuppressibility,
+  classifyKnownExtensionSuppressibility,
+  EXTENSION_COMMAND_DISABLED_MESSAGE,
+  handleDisabledExtensionCommandInvocation,
+  resetExtensionSuppressionForTests,
+  type CommandDescriptor,
+  type ExtensionIntrospectionApi,
+  type ExtensionSuppressibility,
+  type ExtensionSuppressionResult,
+  type ToolDescriptor,
+} from './extensions.ts';
 
 export {
   filterDisabledSkillsForSystemPrompt,
