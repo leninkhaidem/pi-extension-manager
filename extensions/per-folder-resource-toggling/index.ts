@@ -18,6 +18,7 @@ import {
   resetExtensionSuppressionForTests,
   type ExtensionIntrospectionApi,
 } from './extensions.ts';
+import { registerResourceToggleCommand, type CommandRegistration, type ExtensionDescriptor } from './tui.ts';
 
 export type ResourceDiscoverReason = 'startup' | 'reload' | string;
 
@@ -43,6 +44,9 @@ export interface InputEvent {
 }
 
 export interface PiExtensionApi extends ExtensionIntrospectionApi {
+  registerCommand?(command: CommandRegistration): void;
+  getSkills?(): Array<BeforeAgentStartEvent['systemPromptOptions']['skills'][number]> | Promise<Array<BeforeAgentStartEvent['systemPromptOptions']['skills'][number]>>;
+  getExtensions?(): ExtensionDescriptor[] | Promise<ExtensionDescriptor[]>;
   on?(event: 'session_start', handler: (event: SessionStartEvent) => Promise<void> | void): void;
   on?(event: 'resources_discover', handler: (event: ResourceDiscoverEvent, ctx?: ToggleContext) => Promise<object> | object): void;
   on?(event: 'before_agent_start', handler: (event: BeforeAgentStartEvent, ctx: ToggleContext) => Promise<object | void> | object | void): void;
@@ -89,6 +93,7 @@ export function setSkillCliOverridesForTests(overrides: SkillCliOverrides): void
 
 export default function perFolderResourceToggling(pi: PiExtensionApi): void {
   currentCliOverrides = parseSkillCliOverrides();
+  registerResourceToggleCommand(pi);
   registerPiEvent(pi, 'session_start', async (event: SessionStartEvent, ctx?: ToggleContext) => {
     await refreshResourceToggleState(resolveToggleContext(event, ctx), pi);
   });
@@ -164,6 +169,24 @@ export {
   type ExtensionSuppressionResult,
   type ToolDescriptor,
 } from './extensions.ts';
+
+export {
+  BEST_EFFORT_EXTENSION_DETAIL,
+  buildResourceToggleView,
+  EVENT_ONLY_EXTENSION_DETAIL,
+  NON_TUI_MESSAGE,
+  openResourceToggleTui,
+  registerResourceToggleCommand,
+  RESOURCE_TOGGLE_COMMAND,
+  RESOURCE_TOGGLE_COMMAND_DESCRIPTION,
+  SAVE_SKIPPED_UNTRUSTED_MESSAGE,
+  SAVE_SUCCESS_MESSAGE,
+  type CommandRegistration,
+  type ExtensionDescriptor,
+  type ResourceToggleCommandContext,
+  type ResourceToggleView,
+  type ResourceToggleViewItem,
+} from './tui.ts';
 
 export {
   filterDisabledSkillsForSystemPrompt,
