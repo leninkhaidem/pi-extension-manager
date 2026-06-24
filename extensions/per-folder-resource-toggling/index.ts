@@ -44,7 +44,7 @@ export interface InputEvent {
 }
 
 export interface PiExtensionApi extends ExtensionIntrospectionApi {
-  registerCommand?(command: CommandRegistration): void;
+  registerCommand?(name: string, options: CommandRegistration): void;
   getSkills?(): Array<BeforeAgentStartEvent['systemPromptOptions']['skills'][number]> | Promise<Array<BeforeAgentStartEvent['systemPromptOptions']['skills'][number]>>;
   getExtensions?(): ExtensionDescriptor[] | Promise<ExtensionDescriptor[]>;
   on?(event: 'session_start', handler: (event: SessionStartEvent) => Promise<void> | void): void;

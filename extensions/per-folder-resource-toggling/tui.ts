@@ -37,15 +37,14 @@ export interface ResourceToggleCommandContext extends ToggleContext {
 }
 
 export interface ResourceToggleCommandApi extends ExtensionIntrospectionApi {
-  registerCommand?(command: CommandRegistration): void;
+  registerCommand?(name: string, options: CommandRegistration): void;
   getSkills?(): SkillDescriptor[] | Promise<SkillDescriptor[]>;
   getExtensions?(): ExtensionDescriptor[] | Promise<ExtensionDescriptor[]>;
 }
 
 export interface CommandRegistration {
-  name: string;
   description: string;
-  handler(ctx: ResourceToggleCommandContext): Promise<void>;
+  handler(args: string, ctx: ResourceToggleCommandContext): Promise<void>;
 }
 
 export interface ExtensionDescriptor {
@@ -78,10 +77,9 @@ export function registerResourceToggleCommand(pi: ResourceToggleCommandApi): voi
     return;
   }
 
-  pi.registerCommand({
-    name: RESOURCE_TOGGLE_COMMAND,
+  pi.registerCommand(RESOURCE_TOGGLE_COMMAND, {
     description: RESOURCE_TOGGLE_COMMAND_DESCRIPTION,
-    handler: async (ctx: ResourceToggleCommandContext) => {
+    handler: async (_args: string, ctx: ResourceToggleCommandContext) => {
       await openResourceToggleTui(pi, ctx);
     },
   });

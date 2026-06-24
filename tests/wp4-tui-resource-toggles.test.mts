@@ -64,13 +64,14 @@ function createContext(cwd: string, mode = 'tui'): TestContext {
   };
 }
 
-function createPi(api: Record<string, unknown> = {}): { commands: Map<string, { name: string; description: string; handler(ctx: TestContext): Promise<void> }> } & Record<string, unknown> {
-  const commands = new Map<string, { name: string; description: string; handler(ctx: TestContext): Promise<void> }>();
+function createPi(api: Record<string, unknown> = {}): { commands: Map<string, { description: string; handler(args: string, ctx: TestContext): Promise<void> }> } & Record<string, unknown> {
+  const commands = new Map<string, { description: string; handler(args: string, ctx: TestContext): Promise<void> }>();
   return {
     commands,
     ...api,
-    registerCommand(command: { name: string; description: string; handler(ctx: TestContext): Promise<void> }): void {
-      commands.set(command.name, command);
+    registerCommand(name: string, options: { description: string; handler(args: string, ctx: TestContext): Promise<void> }): void {
+      assert.equal(typeof name, 'string');
+      commands.set(name, options);
     },
     on(): void {},
   };
@@ -92,10 +93,13 @@ async function testCommandRegistrationAndTuiOpen(): Promise<void> {
 
     const command = pi.commands.get(RESOURCE_TOGGLE_COMMAND);
     assert.ok(command);
+    assert.equal(typeof RESOURCE_TOGGLE_COMMAND, 'string');
+    assert.equal(RESOURCE_TOGGLE_COMMAND, 'skills-extensions');
     assert.equal(command?.description, RESOURCE_TOGGLE_COMMAND_DESCRIPTION);
+    assert.equal(typeof command?.handler, 'function');
 
     const ctx = createContext(projectRoot);
-    await command?.handler(ctx);
+    await command?.handler('', ctx);
     assert.equal(ctx.customViews.length, 1);
     assert.equal(ctx.customViews[0].title, 'Skills and extensions');
     assert.equal(ctx.customViews[0].items.filter((item) => item.kind === 'skill').length, 2);
@@ -114,7 +118,7 @@ async function testNonTuiDoesNotRenderCustomUi(): Promise<void> {
 
     for (const mode of ['print', 'json', 'rpc']) {
       const ctx = createContext(projectRoot, mode);
-      await command?.handler(ctx);
+      await command?.handler('', ctx);
       assert.equal(ctx.customViews.length, 0);
       assert.deepEqual(ctx.notices, [NON_TUI_MESSAGE]);
     }
