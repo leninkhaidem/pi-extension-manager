@@ -40,7 +40,7 @@
       "path": ".tasks/per-folder-resource-toggling/packages/WP4.md",
       "proof_path": ".tasks/per-folder-resource-toggling/proofs/WP4.proof.md",
       "report_path": ".tasks/per-folder-resource-toggling/reports/WP4.package-verification.md",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "WP1",
         "WP2",
