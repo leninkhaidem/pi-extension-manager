@@ -394,12 +394,14 @@ async function listExtensionItems(
 }
 
 async function collectSkills(pi: ResourceToggleCommandApi, ctx: ResourceToggleCommandContext): Promise<SkillDescriptor[]> {
+  const commands = await safeList(() => pi.getCommands?.());
   const sources = await Promise.all([
     safeList(() => ctx.getSkills?.()),
     safeList(() => pi.getSkills?.()),
     Promise.resolve(ctx.availableSkills ?? []),
     Promise.resolve(ctx.skills ?? []),
     Promise.resolve(ctx.systemPromptOptions?.skills ?? []),
+    Promise.resolve(commands.map(skillDescriptorFromCommand)),
   ]);
   return sources.flat().filter(isSkillDescriptor);
 }
@@ -417,14 +419,14 @@ async function collectExtensionIds(
   ]);
 
   return uniqueStrings([
-    ...Object.keys(state.extensions),
+    ...Object.keys(state.extensions).filter(isRealExtensionId),
     ...(ctx.availableExtensions ?? []).map(extensionIdFromDescriptor),
     ...(ctx.extensions ?? []).map(extensionIdFromDescriptor),
     ...ctxExtensions.map(extensionIdFromDescriptor),
     ...piExtensions.map(extensionIdFromDescriptor),
     ...tools.map(extensionIdFromTool),
     ...commands.filter((command) => command.source === 'extension').map(extensionIdFromCommand),
-  ].filter((id): id is string => Boolean(id)));
+  ].filter((id): id is string => Boolean(id) && isRealExtensionId(id)));
 }
 
 async function safeList<T>(read: () => T[] | Promise<T[]> | undefined): Promise<T[]> {
@@ -470,6 +472,36 @@ function hasMetadataValue(descriptor: SkillDescriptorWithMetadata, expected: str
   return ['source', 'sourceType', 'kind', 'type', 'origin'].some((key) => descriptor[key] === expected);
 }
 
+function skillDescriptorFromCommand(command: CommandDescriptor): SkillDescriptor | null {
+  if (command.source !== 'skill') {
+    return null;
+  }
+
+  const name = command.name ?? command.command ?? command.id;
+  if (!name) {
+    return null;
+  }
+
+  const filePath = skillPathFromSourceInfo(command.sourceInfo) ?? name;
+  return { name: name.replace(/^\//, ''), filePath };
+}
+
+function skillPathFromSourceInfo(sourceInfo: string | Record<string, unknown> | null | undefined): string | null {
+  if (typeof sourceInfo === 'string') {
+    return sourceInfo;
+  }
+  if (!sourceInfo || typeof sourceInfo !== 'object') {
+    return null;
+  }
+  for (const key of ['path', 'filePath', 'baseDir']) {
+    const value = sourceInfo[key];
+    if (typeof value === 'string' && value.length > 0) {
+      return value;
+    }
+  }
+  return null;
+}
+
 function extractStringValues(value: unknown): string[] {
   if (typeof value === 'string') {
     return [value];
@@ -481,19 +513,28 @@ function extractStringValues(value: unknown): string[] {
 }
 
 function extensionIdFromDescriptor(extension: ExtensionDescriptor): string | null {
+  if (isBuiltinOrSdkSource(extension.sourceInfo)) {
+    return null;
+  }
   return extension.id ?? extension.name ?? extension.packageName ?? extensionIdFromSourceInfo(extension.sourceInfo);
 }
 
 function extensionIdFromTool(tool: ToolDescriptor): string | null {
+  if (isBuiltinOrSdkSource(tool.source) || isBuiltinOrSdkSource(tool.sourceInfo)) {
+    return null;
+  }
   return extensionIdFromSourceInfo(tool.sourceInfo) ?? extensionIdFromSource(tool.source);
 }
 
 function extensionIdFromCommand(command: CommandDescriptor): string | null {
+  if (isBuiltinOrSdkSource(command.source) || isBuiltinOrSdkSource(command.sourceInfo)) {
+    return null;
+  }
   return extensionIdFromSourceInfo(command.sourceInfo);
 }
 
 function extensionIdFromSource(source: string | undefined): string | null {
-  if (!source || source === 'core' || source === 'extension') {
+  if (!source || source === 'core' || source === 'extension' || isBuiltinOrSdkSource(source)) {
     return null;
   }
   return normalizeSourceId(source);
@@ -513,6 +554,23 @@ function extensionIdFromSourceInfo(sourceInfo: string | Record<string, unknown> 
     }
   }
   return null;
+}
+
+function isBuiltinOrSdkSource(value: unknown): boolean {
+  if (typeof value === 'string') {
+    return value === 'builtin' || value === 'sdk' || /^<builtin:[^>]+>$/.test(value);
+  }
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+  const sourceInfo = value as Record<string, unknown>;
+  return sourceInfo.source === 'builtin'
+    || sourceInfo.source === 'sdk'
+    || ['path', 'filePath', 'modulePath', 'directory'].some((key) => isBuiltinOrSdkSource(sourceInfo[key]));
+}
+
+function isRealExtensionId(id: string): boolean {
+  return !isBuiltinOrSdkSource(id) && id !== 'builtin' && id !== 'sdk';
 }
 
 function normalizeSourceId(value: string): string {

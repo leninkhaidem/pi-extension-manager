@@ -189,6 +189,62 @@ async function testSkillAndExtensionListingHonesty(): Promise<void> {
   });
 }
 
+
+async function testBuiltinAndSdkToolsAreNotListedAsExtensions(): Promise<void> {
+  await withTempProject(async (projectRoot) => {
+    const view = await buildResourceToggleView(
+      {
+        getSkills: (): SkillDescriptor[] => [],
+        getExtensions: () => [],
+        getAllTools: (): ToolDescriptor[] => [
+          { name: 'read', sourceInfo: { source: 'builtin', path: '<builtin:read>', scope: 'temporary', origin: 'top-level' } },
+          { name: 'bash', source: '<builtin:bash>', sourceInfo: { path: '<builtin:bash>' } },
+          { name: 'sdk-tool', sourceInfo: { source: 'sdk', path: '/sdk/tools/sdk-tool.ts' } },
+          { name: 'extension-tool', sourceInfo: { extensionId: 'tool-ext' } },
+        ],
+        getCommands: (): CommandDescriptor[] => [],
+      },
+      createContext(projectRoot),
+      { skills: {}, extensions: { '<builtin:read>': false, builtin: false, sdk: false } },
+    );
+
+    const extensionItems = view.items.filter((item) => item.kind === 'extension');
+    assert.deepEqual(extensionItems.map((item) => item.id), ['tool-ext']);
+  });
+}
+
+async function testDynamicSkillCommandsAppearAndToggle(): Promise<void> {
+  await withTempProject(async (projectRoot) => {
+    const dynamicSkillName = `dynamic-skill-${Date.now()}`;
+    const dynamicSkillPath = `/dynamic/skills/${dynamicSkillName}/SKILL.md`;
+    const baseDirSkillName = `base-dir-skill-${Date.now()}`;
+    const baseDir = `/dynamic/skills/${baseDirSkillName}`;
+    const ctx = createContext(projectRoot);
+    const view = await buildResourceToggleView(
+      {
+        getSkills: (): SkillDescriptor[] => [],
+        getExtensions: () => [],
+        getAllTools: (): ToolDescriptor[] => [{ name: 'extension-tool', sourceInfo: { extensionId: 'tool-ext' } }],
+        getCommands: (): CommandDescriptor[] => [
+          { name: dynamicSkillName, source: 'skill', sourceInfo: { path: dynamicSkillPath, source: 'global', scope: 'global', origin: 'startup' } },
+          { name: baseDirSkillName, source: 'skill', sourceInfo: { baseDir, source: 'project', scope: 'project', origin: 'startup' } },
+          { name: 'extension-cmd', source: 'extension', sourceInfo: { extensionId: 'command-ext' } },
+        ],
+      },
+      ctx,
+      { skills: {}, extensions: {} },
+    );
+
+    assert.equal(view.items.find((item) => item.id === dynamicSkillPath)?.label, dynamicSkillName);
+    assert.equal(view.items.find((item) => item.id === baseDir)?.label, baseDirSkillName);
+    assert.equal(view.items.find((item) => item.id === 'tool-ext')?.kind, 'extension');
+    assert.equal(view.items.find((item) => item.id === 'command-ext')?.kind, 'extension');
+
+    assert.deepEqual(await view.onToggle(dynamicSkillPath, false), { skills: { [dynamicSkillPath]: false }, extensions: {} });
+    assert.equal(view.items.find((item) => item.id === dynamicSkillPath)?.enabled, false);
+  });
+}
+
 async function testTogglePersistsOnlySkillsAndExtensionsAndRoundTrips(): Promise<void> {
   await withTempProject(async (projectRoot) => {
     const ctx = createContext(projectRoot);
@@ -306,6 +362,8 @@ function testAudienceText(): void {
 await testCommandRegistrationAndTuiOpen();
 await testNonTuiDoesNotRenderCustomUi();
 await testSkillAndExtensionListingHonesty();
+await testBuiltinAndSdkToolsAreNotListedAsExtensions();
+await testDynamicSkillCommandsAppearAndToggle();
 await testTogglePersistsOnlySkillsAndExtensionsAndRoundTrips();
 await testCustomFactoryReturnsInteractiveComponent();
 testAudienceText();
