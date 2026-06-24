@@ -82,10 +82,11 @@ async function testToolSuppressionPreservesUnrelatedActiveTools(): Promise<void>
 }
 
 
-async function testReEnableRestoresPreviouslySuppressedTools(): Promise<void> {
+async function testReEnableRestoresOnlyPreviouslyActiveSuppressedTools(): Promise<void> {
   const setActiveCalls: string[][] = [];
   const tools: ToolDescriptor[] = [
-    { name: 'toggle-tool', active: true, sourceInfo: { extensionId: 'toggle-ext' } },
+    { name: 'toggle-active-tool', active: true, sourceInfo: { extensionId: 'toggle-ext' } },
+    { name: 'toggle-inactive-tool', active: false, sourceInfo: { extensionId: 'toggle-ext' } },
     { name: 'other-tool', active: true, sourceInfo: { extensionId: 'other-ext' } },
   ];
   const pi = {
@@ -102,7 +103,8 @@ async function testReEnableRestoresPreviouslySuppressedTools(): Promise<void> {
   await applyDisabledExtensionSuppression(pi, { skills: {}, extensions: { 'toggle-ext': false } });
   await applyDisabledExtensionSuppression(pi, { skills: {}, extensions: { 'toggle-ext': true } });
 
-  assert.deepEqual(setActiveCalls, [['other-tool'], ['other-tool', 'toggle-tool']]);
+  assert.deepEqual(setActiveCalls, [['other-tool'], ['other-tool', 'toggle-active-tool']]);
+  assert.equal(tools.find((tool) => tool.name === 'toggle-inactive-tool')?.active, false);
 }
 
 async function testCommandSuppressionComposesAfterSkillHandler(): Promise<void> {
@@ -239,7 +241,7 @@ assert.equal(EXTENSION_COMMAND_DISABLED_MESSAGE.includes('workflow'), false);
 assert.equal(EXTENSION_COMMAND_DISABLED_MESSAGE.includes('planning'), false);
 
 await testToolSuppressionPreservesUnrelatedActiveTools();
-await testReEnableRestoresPreviouslySuppressedTools();
+await testReEnableRestoresOnlyPreviouslyActiveSuppressedTools();
 await testCommandSuppressionComposesAfterSkillHandler();
 await testBestEffortFailuresAndEventOnlyNoopDoNotThrow();
 await testClassifierCoversToolCommandBothNeither();

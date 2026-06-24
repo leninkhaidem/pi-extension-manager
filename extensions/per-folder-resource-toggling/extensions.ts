@@ -75,18 +75,27 @@ export async function applyDisabledExtensionSuppression(
     try {
       const knownToolNames = new Set(tools.map(getToolName).filter((name): name is string => Boolean(name)));
       const disabledToolNameSet = new Set(disabledToolNames);
+      const currentlyActiveToolNames = tools
+        .filter(isCurrentlyActiveTool)
+        .map(getToolName)
+        .filter((name): name is string => Boolean(name));
+      const currentlyActiveToolNameSet = new Set(currentlyActiveToolNames);
       const restoredToolNames = [...lastSuppressedToolNames]
         .filter((name) => knownToolNames.has(name) && !disabledToolNameSet.has(name));
+      const stillDisabledSuppressedToolNames = [...lastSuppressedToolNames]
+        .filter((name) => knownToolNames.has(name) && disabledToolNameSet.has(name));
+      const newlySuppressedToolNames = disabledToolNames
+        .filter((name) => currentlyActiveToolNameSet.has(name));
       const activeToolNames = uniqueStrings([
-        ...tools
-          .filter(isCurrentlyActiveTool)
-          .map(getToolName)
-          .filter((name): name is string => Boolean(name)),
+        ...currentlyActiveToolNames,
         ...restoredToolNames,
       ]).filter((name) => !disabledToolNameSet.has(name));
 
       await pi.setActiveTools(activeToolNames);
-      lastSuppressedToolNames = disabledToolNameSet;
+      lastSuppressedToolNames = new Set(uniqueStrings([
+        ...stillDisabledSuppressedToolNames,
+        ...newlySuppressedToolNames,
+      ]));
       appliedToolSuppression = true;
     } catch {
       appliedToolSuppression = false;
