@@ -70,12 +70,14 @@ async function expandSkillForTest(skill: SkillDescriptor, args = ''): Promise<st
   return args ? `${skillBlock}\n\n${args}` : skillBlock;
 }
 
-function promptFor(skills: SkillDescriptor[]): string {
+function promptFor(skills: SkillDescriptor[], currentPiWording = false): string {
   return [
     'base prompt',
     '',
     'The following skills provide specialized instructions for specific tasks.',
-    "Use the read tool to load a skill's file when the task matches its description.",
+    currentPiWording
+      ? 'Read the full skill file when the task matches its description.'
+      : "Use the read tool to load a skill's file when the task matches its description.",
     'When a skill file references a relative path, resolve it against the skill directory (parent of SKILL.md / dirname of the path) and use that absolute path in tool commands.',
     '',
     '<available_skills>',
@@ -136,6 +138,47 @@ async function testDisableBothSurfacesForSameSkill(): Promise<void> {
   });
 }
 
+async function testCurrentPiSkillPromptWordingIsReplaced(): Promise<void> {
+  await withTempProject(async (projectRoot) => {
+    const handlers = registerExtension();
+    const ctx = createContext(projectRoot);
+    const disabledSkill = await createSkill(projectRoot, 'current-wording-disabled');
+    const otherSkill = await createSkill(projectRoot, 'current-wording-other');
+    await saveResourceToggleState(ctx, { skills: { [disabledSkill.filePath]: false }, extensions: {} });
+    await handlers.get('resources_discover')?.({ ctx, reason: 'startup' } as never);
+
+    const beforeEvent = {
+      systemPrompt: promptFor([disabledSkill, otherSkill], true),
+      systemPromptOptions: { skills: [disabledSkill, otherSkill] },
+    };
+    const beforeResult = await handlers.get('before_agent_start')?.(beforeEvent as never, ctx) as { systemPrompt?: string } | undefined;
+    assert.deepEqual(beforeEvent.systemPromptOptions.skills, [otherSkill]);
+    assert.equal(beforeResult?.systemPrompt?.includes('Read the full skill file'), false);
+    assert.equal(beforeResult?.systemPrompt?.includes('<name>current-wording-disabled</name>'), false);
+    assert.equal(beforeResult?.systemPrompt?.includes('<name>current-wording-other</name>'), true);
+  });
+}
+
+async function testDynamicSkillPersistedByPathFiltersBeforeAgentStart(): Promise<void> {
+  await withTempProject(async (projectRoot) => {
+    const handlers = registerExtension();
+    const ctx = createContext(projectRoot);
+    const dynamicSkill = { name: 'dynamic-path-skill', description: 'Dynamic path skill', filePath: '/dynamic/skills/dynamic-path-skill/SKILL.md' };
+    const otherSkill = await createSkill(projectRoot, 'dynamic-other');
+    await saveResourceToggleState(ctx, { skills: { [dynamicSkill.filePath]: false }, extensions: {} });
+    await handlers.get('resources_discover')?.({ ctx, reason: 'startup' } as never);
+
+    const beforeEvent = {
+      systemPrompt: promptFor([dynamicSkill, otherSkill]),
+      systemPromptOptions: { skills: [dynamicSkill, otherSkill] },
+    };
+    const beforeResult = await handlers.get('before_agent_start')?.(beforeEvent as never, ctx) as { systemPrompt?: string } | undefined;
+    assert.deepEqual(beforeEvent.systemPromptOptions.skills, [otherSkill]);
+    assert.equal(beforeResult?.systemPrompt?.includes('<name>dynamic-path-skill</name>'), false);
+    assert.equal(beforeResult?.systemPrompt?.includes('<name>dynamic-other</name>'), true);
+  });
+}
+
 async function testExplicitSkillOverridesDisableOnBothSurfaces(): Promise<void> {
   await withTempProject(async (projectRoot) => {
     const handlers = registerExtension();
@@ -186,6 +229,8 @@ assert.equal(SKILL_DISABLED_MESSAGE.includes('planning'), false);
 
 await testEnableReturnsSkillPathsUnlessNoSkills();
 await testDisableBothSurfacesForSameSkill();
+await testCurrentPiSkillPromptWordingIsReplaced();
+await testDynamicSkillPersistedByPathFiltersBeforeAgentStart();
 await testExplicitSkillOverridesDisableOnBothSurfaces();
 await testNoConfigEquivalentLeavesBehaviorUnchanged();
 

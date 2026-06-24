@@ -18,6 +18,7 @@ export const RESOURCE_TOGGLE_COMMAND_DESCRIPTION = 'Turn skills and extensions o
 export const NON_TUI_MESSAGE = 'Skills and extensions can be turned on or off in the interactive terminal UI.';
 export const SAVE_SUCCESS_MESSAGE = 'Changes saved. They take effect after /reload or when you start a new session.';
 export const SAVE_SKIPPED_UNTRUSTED_MESSAGE = 'This project is not trusted, so skills and extensions were not changed.';
+export const CLOSE_RELOAD_REMINDER_MESSAGE = 'Changes saved. Run /reload or start a new session for them to take effect.';
 export const BEST_EFFORT_EXTENSION_DETAIL = 'Best-effort: turns off this extension\'s tools/commands, but does not unload the extension.';
 export const EVENT_ONLY_EXTENSION_DETAIL = 'No tools or commands to turn off.';
 
@@ -90,6 +91,7 @@ export interface ResourceToggleView {
   message: string;
   items: ResourceToggleViewItem[];
   onToggle(id: string, enabled: boolean): Promise<ResourceToggleState>;
+  onClose?(): Promise<void> | void;
 }
 
 export function registerResourceToggleCommand(pi: ResourceToggleCommandApi): void {
@@ -179,6 +181,7 @@ class ResourceToggleComponentAdapter implements ResourceToggleComponent {
 
   async handleInput(data: string): Promise<boolean> {
     if (matchesInput(data, ['cancel', 'q'], this.keybindings)) {
+      await this.view.onClose?.();
       this.done(undefined);
       return true;
     }
@@ -325,6 +328,7 @@ export async function buildResourceToggleView(
   initialState: ResourceToggleState = createEmptyToggleState(),
 ): Promise<ResourceToggleView> {
   let currentState = cloneState(initialState);
+  let savedDuringSession = false;
   const [skills, extensions] = await Promise.all([listSkillItems(pi, ctx, currentState), listExtensionItems(pi, ctx, currentState)]);
 
   return {
@@ -348,12 +352,18 @@ export async function buildResourceToggleView(
       if (saved) {
         currentState = cloneState(nextState);
         item.enabled = enabled;
+        savedDuringSession = true;
         await ctx.ui?.notify?.(SAVE_SUCCESS_MESSAGE);
       } else {
         await ctx.ui?.notify?.(SAVE_SKIPPED_UNTRUSTED_MESSAGE);
       }
 
       return cloneState(currentState);
+    },
+    onClose: async (): Promise<void> => {
+      if (savedDuringSession) {
+        await ctx.ui?.notify?.(CLOSE_RELOAD_REMINDER_MESSAGE);
+      }
     },
   };
 }

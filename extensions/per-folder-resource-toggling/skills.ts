@@ -199,21 +199,64 @@ function parseSkillCommandName(text: string): string | null {
 
 function buildSystemPromptWithSkills(
   currentSystemPrompt: string,
-  originalSkills: SkillDescriptor[],
+  _originalSkills: SkillDescriptor[],
   filteredSkills: SkillDescriptor[],
 ): string {
-  let nextPrompt = currentSystemPrompt;
-  const originalSkillPrompt = formatSkillsForPrompt(originalSkills);
-  if (originalSkillPrompt) {
-    nextPrompt = nextPrompt.replace(originalSkillPrompt, '');
-  }
-
+  const nextPrompt = removeExistingSkillsPromptSection(currentSystemPrompt);
   const filteredSkillPrompt = formatSkillsForPrompt(filteredSkills);
   if (!filteredSkillPrompt) {
     return nextPrompt;
   }
 
   return `${nextPrompt}${filteredSkillPrompt}`;
+}
+
+function removeExistingSkillsPromptSection(systemPrompt: string): string {
+  const blockMatch = systemPrompt.match(/<available_skills>[\s\S]*?<\/available_skills>/);
+  if (!blockMatch || blockMatch.index === undefined) {
+    return systemPrompt;
+  }
+
+  const blockStart = blockMatch.index;
+  let sectionStart = systemPrompt.lastIndexOf('\n', blockStart - 1) + 1;
+
+  sectionStart = rewindBlankLines(systemPrompt, sectionStart);
+  sectionStart = rewindSkillInstructionLines(systemPrompt, sectionStart);
+
+  const sectionEnd = blockStart + blockMatch[0].length;
+  return `${systemPrompt.slice(0, sectionStart).trimEnd()}${systemPrompt.slice(sectionEnd)}`;
+}
+
+function rewindBlankLines(value: string, offset: number): number {
+  let cursor = offset;
+  while (cursor > 0) {
+    const lineStart = value.lastIndexOf('\n', cursor - 2) + 1;
+    const line = value.slice(lineStart, cursor).replace(/\n$/, '');
+    if (line.trim() !== '') {
+      return cursor;
+    }
+    cursor = lineStart;
+  }
+  return cursor;
+}
+
+function rewindSkillInstructionLines(value: string, offset: number): number {
+  let cursor = offset;
+  let sectionStart = offset;
+  for (let linesChecked = 0; linesChecked < 4 && cursor > 0; linesChecked += 1) {
+    const lineStart = value.lastIndexOf('\n', cursor - 2) + 1;
+    const line = value.slice(lineStart, cursor).replace(/\n$/, '');
+    if (line.trim() === '' || !looksLikeSkillsPromptInstruction(line)) {
+      break;
+    }
+    sectionStart = lineStart;
+    cursor = lineStart;
+  }
+  return sectionStart;
+}
+
+function looksLikeSkillsPromptInstruction(line: string): boolean {
+  return /skill/i.test(line) && /(following|specialized|instruction|task|read|load|file|relative|resolve|directory|matches|description)/i.test(line);
 }
 
 function formatSkillsForPrompt(skills: SkillDescriptor[]): string {

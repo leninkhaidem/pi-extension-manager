@@ -10,6 +10,7 @@ import perFolderResourceToggling, {
   RESOURCE_TOGGLE_COMMAND,
   RESOURCE_TOGGLE_COMMAND_DESCRIPTION,
   SAVE_SUCCESS_MESSAGE,
+  CLOSE_RELOAD_REMINDER_MESSAGE,
   buildResourceToggleView,
   createResourceToggleCustomFactory,
   resetResourceToggleStateForTests,
@@ -321,6 +322,24 @@ async function testCustomFactoryReturnsInteractiveComponent(): Promise<void> {
     assert.equal(renderRequests, 4);
     await component.handleInput?.('<cancel>');
     assert.equal(doneCalls, 1);
+    assert.equal(ctx.notices.at(-1), CLOSE_RELOAD_REMINDER_MESSAGE);
+
+    const noChangeView = await buildResourceToggleView(
+      {
+        getSkills: (): SkillDescriptor[] => [alphaSkill],
+        getExtensions: () => [],
+        getAllTools: (): ToolDescriptor[] => [],
+        getCommands: (): CommandDescriptor[] => [],
+      },
+      ctx,
+      { skills: {}, extensions: {} },
+    );
+    const noChangeDoneCallsBefore = doneCalls;
+    const noChangeNoticesBefore = ctx.notices.length;
+    const noChangeComponent = createResourceToggleCustomFactory(noChangeView)({ requestRender: () => { renderRequests += 1; } }, {}, keybindings, () => { doneCalls += 1; });
+    await noChangeComponent.handleInput?.('<cancel>');
+    assert.equal(doneCalls, noChangeDoneCallsBefore + 1);
+    assert.equal(ctx.notices.length, noChangeNoticesBefore);
 
     const fallbackView = await buildResourceToggleView(
       {
@@ -351,6 +370,7 @@ function testAudienceText(): void {
     RESOURCE_TOGGLE_COMMAND_DESCRIPTION,
     NON_TUI_MESSAGE,
     SAVE_SUCCESS_MESSAGE,
+    CLOSE_RELOAD_REMINDER_MESSAGE,
     BEST_EFFORT_EXTENSION_DETAIL,
     EVENT_ONLY_EXTENSION_DETAIL,
   ];
