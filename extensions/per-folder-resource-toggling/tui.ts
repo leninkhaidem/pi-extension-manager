@@ -21,6 +21,24 @@ export const SAVE_SKIPPED_UNTRUSTED_MESSAGE = 'This project is not trusted, so s
 export const BEST_EFFORT_EXTENSION_DETAIL = 'Best-effort: turns off this extension\'s tools/commands, but does not unload the extension.';
 export const EVENT_ONLY_EXTENSION_DETAIL = 'No tools or commands to turn off.';
 
+export interface ResourceToggleComponent {
+  render(width: number): string[];
+  invalidate(): void;
+  handleInput?(data: string): void | boolean | Promise<void | boolean>;
+}
+
+export type ResourceToggleCustomFactory = (
+  tui: { requestRender?(): void },
+  theme: ResourceToggleTheme,
+  keybindings: unknown,
+  done: (value?: unknown) => void,
+) => ResourceToggleComponent;
+
+export interface ResourceToggleTheme {
+  fg?(name: string, text: string): string;
+  bold?(text: string): string;
+}
+
 export interface ResourceToggleCommandContext extends ToggleContext {
   mode?: string;
   hasUI?: boolean | (() => boolean);
@@ -32,7 +50,7 @@ export interface ResourceToggleCommandContext extends ToggleContext {
   getSkills?(): SkillDescriptor[] | Promise<SkillDescriptor[]>;
   getExtensions?(): ExtensionDescriptor[] | Promise<ExtensionDescriptor[]>;
   ui?: ToggleContext['ui'] & {
-    custom?(view: ResourceToggleView): unknown | Promise<unknown>;
+    custom?(factory: ResourceToggleCustomFactory): unknown | Promise<unknown>;
   };
 }
 
@@ -103,7 +121,134 @@ export async function openResourceToggleTui(
 
   const state = await loadResourceToggleState(ctx);
   const view = await buildResourceToggleView(pi, ctx, state);
-  await ctx.ui.custom(view);
+  await ctx.ui.custom(createResourceToggleCustomFactory(view));
+}
+
+export function createResourceToggleCustomFactory(view: ResourceToggleView): ResourceToggleCustomFactory {
+  return (tui, theme, _keybindings, done) => new ResourceToggleComponentAdapter(view, tui, theme, done);
+}
+
+class ResourceToggleComponentAdapter implements ResourceToggleComponent {
+  private selectedIndex = 0;
+  private view: ResourceToggleView;
+  private tui: { requestRender?(): void };
+  private theme: ResourceToggleTheme;
+  private done: (value?: unknown) => void;
+
+  constructor(
+    view: ResourceToggleView,
+    tui: { requestRender?(): void },
+    theme: ResourceToggleTheme,
+    done: (value?: unknown) => void,
+  ) {
+    this.view = view;
+    this.tui = tui;
+    this.theme = theme;
+    this.done = done;
+  }
+
+  render(width: number): string[] {
+    const maxWidth = Math.max(1, width);
+    const title = this.style('accent', this.bold(this.view.title));
+    const lines = [title, ...wrapLine(this.view.message, maxWidth), ''];
+
+    if (this.view.items.length === 0) {
+      lines.push(this.style('dim', 'No skills or extensions found.'));
+    } else {
+      this.view.items.forEach((item, index) => {
+        const selected = index === this.selectedIndex ? '›' : ' ';
+        const mark = item.enabled ? '[x]' : '[ ]';
+        const muted = item.toggleable ? '' : ' (not actionable)';
+        lines.push(...wrapLine(`${selected} ${mark} ${item.label}${muted}`, maxWidth));
+        if (item.detail) {
+          lines.push(...wrapLine(`    ${item.detail}`, maxWidth).map((line) => this.style('dim', line)));
+        }
+      });
+    }
+
+    lines.push('', this.style('dim', '↑/↓ move • Space/Enter toggle • Esc/q close'));
+    return lines.flatMap((line) => wrapLine(line, maxWidth));
+  }
+
+  invalidate(): void {}
+
+  async handleInput(data: string): Promise<boolean> {
+    if (matchesInput(data, ['escape', 'q'])) {
+      this.done(undefined);
+      return true;
+    }
+    if (matchesInput(data, ['up'])) {
+      this.moveSelection(-1);
+      return true;
+    }
+    if (matchesInput(data, ['down'])) {
+      this.moveSelection(1);
+      return true;
+    }
+    if (matchesInput(data, ['space', 'enter'])) {
+      const item = this.view.items[this.selectedIndex];
+      if (item?.toggleable) {
+        await this.view.onToggle(item.id, !item.enabled);
+        this.requestRender();
+      }
+      return true;
+    }
+    return false;
+  }
+
+  private moveSelection(delta: number): void {
+    if (this.view.items.length === 0) {
+      return;
+    }
+    this.selectedIndex = (this.selectedIndex + delta + this.view.items.length) % this.view.items.length;
+    this.requestRender();
+  }
+
+  private requestRender(): void {
+    this.tui.requestRender?.();
+  }
+
+  private bold(text: string): string {
+    return this.theme.bold?.(text) ?? text;
+  }
+
+  private style(name: string, text: string): string {
+    return this.theme.fg?.(name, text) ?? text;
+  }
+}
+
+function matchesInput(data: string, keys: string[]): boolean {
+  return keys.some((key) => {
+    switch (key) {
+      case 'enter':
+        return data === '\r' || data === '\n' || data === '\x1BOM';
+      case 'escape':
+        return data === '\x1B';
+      case 'space':
+        return data === ' ';
+      case 'up':
+        return data === '\x1B[A';
+      case 'down':
+        return data === '\x1B[B';
+      default:
+        return data === key;
+    }
+  });
+}
+
+function wrapLine(line: string, width: number): string[] {
+  if (line.length <= width) {
+    return [line];
+  }
+
+  const lines: string[] = [];
+  let remaining = line;
+  while (remaining.length > width) {
+    lines.push(remaining.slice(0, width));
+    remaining = remaining.slice(width);
+  }
+  lines.push(remaining);
+  return lines;
 }
 
 export async function buildResourceToggleView(

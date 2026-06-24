@@ -11,11 +11,13 @@ import perFolderResourceToggling, {
   RESOURCE_TOGGLE_COMMAND_DESCRIPTION,
   SAVE_SUCCESS_MESSAGE,
   buildResourceToggleView,
+  createResourceToggleCustomFactory,
   resetResourceToggleStateForTests,
   resolveResourceToggleConfigPath,
   saveResourceToggleState,
   type CommandDescriptor,
-  type ResourceToggleView,
+  type ResourceToggleComponent,
+  type ResourceToggleCustomFactory,
   type SkillDescriptor,
   type ToolDescriptor,
 } from '../extensions/per-folder-resource-toggling/index.ts';
@@ -27,10 +29,11 @@ interface TestContext {
   isProjectTrusted(): boolean;
   ui: {
     notify(message: string): void;
-    custom(view: ResourceToggleView): void;
+    custom(factory: ResourceToggleCustomFactory): void;
   };
   notices: string[];
-  customViews: ResourceToggleView[];
+  customFactories: ResourceToggleCustomFactory[];
+  customComponents: ResourceToggleComponent[];
   skills?: SkillDescriptor[];
 }
 
@@ -45,20 +48,27 @@ async function withTempProject<T>(run: (projectRoot: string) => Promise<T>): Pro
 
 function createContext(cwd: string, mode = 'tui'): TestContext {
   const notices: string[] = [];
-  const customViews: ResourceToggleView[] = [];
+  const customFactories: ResourceToggleCustomFactory[] = [];
+  const customComponents: ResourceToggleComponent[] = [];
   return {
     cwd,
     mode,
     hasUI: true,
     notices,
-    customViews,
+    customFactories,
+    customComponents,
     isProjectTrusted: () => true,
     ui: {
       notify(message: string): void {
         notices.push(message);
       },
-      custom(view: ResourceToggleView): void {
-        customViews.push(view);
+      custom(factory: ResourceToggleCustomFactory): void {
+        assert.equal(typeof factory, 'function');
+        customFactories.push(factory);
+        const component = factory({ requestRender(): void {} }, {}, {}, () => {});
+        assert.equal(typeof component.render, 'function');
+        assert.equal(typeof component.invalidate, 'function');
+        customComponents.push(component);
       },
     },
   };
@@ -100,9 +110,10 @@ async function testCommandRegistrationAndTuiOpen(): Promise<void> {
 
     const ctx = createContext(projectRoot);
     await command?.handler('', ctx);
-    assert.equal(ctx.customViews.length, 1);
-    assert.equal(ctx.customViews[0].title, 'Skills and extensions');
-    assert.equal(ctx.customViews[0].items.filter((item) => item.kind === 'skill').length, 2);
+    assert.equal(ctx.customFactories.length, 1);
+    assert.equal(ctx.customComponents.length, 1);
+    assert.ok(ctx.customComponents[0].render(80).some((line) => line.includes('Skills and extensions')));
+    assert.ok(ctx.customComponents[0].render(80).some((line) => line.includes('alpha')));
   });
 }
 
@@ -119,7 +130,7 @@ async function testNonTuiDoesNotRenderCustomUi(): Promise<void> {
     for (const mode of ['print', 'json', 'rpc']) {
       const ctx = createContext(projectRoot, mode);
       await command?.handler('', ctx);
-      assert.equal(ctx.customViews.length, 0);
+      assert.equal(ctx.customFactories.length, 0);
       assert.deepEqual(ctx.notices, [NON_TUI_MESSAGE]);
     }
   });
@@ -206,6 +217,33 @@ async function testTogglePersistsOnlySkillsAndExtensionsAndRoundTrips(): Promise
   });
 }
 
+
+async function testCustomFactoryReturnsInteractiveComponent(): Promise<void> {
+  await withTempProject(async (projectRoot) => {
+    const ctx = createContext(projectRoot);
+    const view = await buildResourceToggleView(
+      {
+        getSkills: (): SkillDescriptor[] => [alphaSkill],
+        getExtensions: () => [],
+        getAllTools: (): ToolDescriptor[] => [],
+        getCommands: (): CommandDescriptor[] => [],
+      },
+      ctx,
+      { skills: {}, extensions: {} },
+    );
+    let renderRequests = 0;
+    let doneCalls = 0;
+    const component = createResourceToggleCustomFactory(view)({ requestRender: () => { renderRequests += 1; } }, {}, {}, () => { doneCalls += 1; });
+
+    assert.ok(component.render(80).some((line) => line.includes('alpha')));
+    await component.handleInput?.(' ');
+    assert.equal(renderRequests, 1);
+    assert.equal(view.items[0].enabled, false);
+    await component.handleInput?.('\x1B');
+    assert.equal(doneCalls, 1);
+  });
+}
+
 function testAudienceText(): void {
   const texts = [
     RESOURCE_TOGGLE_COMMAND,
@@ -224,6 +262,7 @@ await testCommandRegistrationAndTuiOpen();
 await testNonTuiDoesNotRenderCustomUi();
 await testSkillAndExtensionListingHonesty();
 await testTogglePersistsOnlySkillsAndExtensionsAndRoundTrips();
+await testCustomFactoryReturnsInteractiveComponent();
 testAudienceText();
 
 console.log('WP4 TUI resource toggle checks passed');

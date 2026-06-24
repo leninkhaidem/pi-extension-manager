@@ -184,6 +184,9 @@ export {
   type CommandRegistration,
   type ExtensionDescriptor,
   type ResourceToggleCommandContext,
+  createResourceToggleCustomFactory,
+  type ResourceToggleComponent,
+  type ResourceToggleCustomFactory,
   type ResourceToggleView,
   type ResourceToggleViewItem,
 } from './tui.ts';
