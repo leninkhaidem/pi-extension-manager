@@ -89,6 +89,9 @@ function createPi(api: Record<string, unknown> = {}): { commands: Map<string, { 
 
 const alphaSkill: SkillDescriptor = { name: 'alpha', description: 'Alpha skill', filePath: '/skills/alpha/SKILL.md' };
 const betaSkill: SkillDescriptor = { name: 'beta', description: 'Beta skill', filePath: '/skills/beta/SKILL.md' };
+const injectedSkill: SkillDescriptor = { name: 'injected', description: 'Injected skill', filePath: '/injected/skills/injected/SKILL.md' };
+const packageSkill: SkillDescriptor = { name: 'package-skill', description: 'Package skill', filePath: '/node_modules/example/skills/package-skill/SKILL.md' };
+const scopedPackageSkill: SkillDescriptor = { name: 'scoped-package-skill', description: 'Scoped package skill', filePath: '/node_modules/@pi/some-package/skills/scoped-package-skill/SKILL.md' };
 
 async function testCommandRegistrationAndTuiOpen(): Promise<void> {
   await withTempProject(async (projectRoot) => {
@@ -139,21 +142,29 @@ async function testNonTuiDoesNotRenderCustomUi(): Promise<void> {
 async function testSkillAndExtensionListingHonesty(): Promise<void> {
   await withTempProject(async (projectRoot) => {
     const ctx = createContext(projectRoot);
+    const builtInSkillBySource = { name: 'builtin-source', description: 'Built-in skill', filePath: '/system/skills/builtin-source/SKILL.md', source: 'core' } as SkillDescriptor;
+    const builtInSkillByFlag = { name: 'builtin-flag', description: 'Built-in skill', filePath: '/skills/builtin-flag/SKILL.md', isBuiltIn: true } as SkillDescriptor;
+    const builtInSkillByPath = { name: 'builtin-path', description: 'Built-in skill', filePath: '/opt/pi/core-skills/builtin-path/SKILL.md' };
     const view = await buildResourceToggleView(
       {
-        getSkills: (): SkillDescriptor[] => [alphaSkill, betaSkill],
+        getSkills: (): SkillDescriptor[] => [alphaSkill, betaSkill, injectedSkill, packageSkill, scopedPackageSkill, builtInSkillBySource, builtInSkillByFlag, builtInSkillByPath],
         getExtensions: () => [{ id: 'tool-ext' }, { id: 'command-ext' }, { id: 'event-only-ext' }],
         getAllTools: (): ToolDescriptor[] => [{ name: 'tool-a', sourceInfo: { extensionId: 'tool-ext' } }],
         getCommands: (): CommandDescriptor[] => [{ name: 'cmd-a', source: 'extension', sourceInfo: { extensionId: 'command-ext' } }],
       },
       ctx,
-      { skills: { [betaSkill.filePath]: false }, extensions: { 'command-ext': false } },
+      { skills: { [betaSkill.filePath]: false, [builtInSkillBySource.filePath]: false, [builtInSkillByPath.filePath]: false }, extensions: { 'command-ext': false } },
     );
 
     assert.deepEqual(view.items.filter((item) => item.kind === 'skill').map((item) => [item.label, item.enabled, item.toggleable]), [
       ['alpha', true, true],
       ['beta', false, true],
+      ['injected', true, true],
+      ['package-skill', true, true],
+      ['scoped-package-skill', true, true],
     ]);
+    assert.equal(view.items.some((item) => item.label.includes('builtin')), false);
+    assert.equal(view.items.some((item) => item.id === builtInSkillBySource.filePath || item.id === builtInSkillByPath.filePath), false);
 
     const toolExtension = view.items.find((item) => item.id === 'tool-ext');
     assert.deepEqual({ enabled: toolExtension?.enabled, toggleable: toolExtension?.toggleable, detail: toolExtension?.detail }, {
@@ -223,7 +234,7 @@ async function testCustomFactoryReturnsInteractiveComponent(): Promise<void> {
     const ctx = createContext(projectRoot);
     const view = await buildResourceToggleView(
       {
-        getSkills: (): SkillDescriptor[] => [alphaSkill],
+        getSkills: (): SkillDescriptor[] => [alphaSkill, betaSkill, injectedSkill],
         getExtensions: () => [],
         getAllTools: (): ToolDescriptor[] => [],
         getCommands: (): CommandDescriptor[] => [],
@@ -233,14 +244,48 @@ async function testCustomFactoryReturnsInteractiveComponent(): Promise<void> {
     );
     let renderRequests = 0;
     let doneCalls = 0;
-    const component = createResourceToggleCustomFactory(view)({ requestRender: () => { renderRequests += 1; } }, {}, {}, () => { doneCalls += 1; });
+    const keybindings = {
+      matches(data: string, binding: string): boolean {
+        return (binding === 'tui.select.down' && data === '<down>')
+          || (binding === 'tui.select.up' && data === '<up>')
+          || (binding === 'tui.select.confirm' && data === '<confirm>')
+          || (binding === 'tui.select.cancel' && data === '<cancel>');
+      },
+    };
+    const component = createResourceToggleCustomFactory(view)({ requestRender: () => { renderRequests += 1; } }, {}, keybindings, () => { doneCalls += 1; });
 
     assert.ok(component.render(80).some((line) => line.includes('alpha')));
+    await component.handleInput?.('<down>');
+    await component.handleInput?.('<confirm>');
+    assert.equal(view.items.find((item) => item.label === 'beta')?.enabled, false);
+    assert.equal(view.items.find((item) => item.label === 'alpha')?.enabled, true);
+    await component.handleInput?.('<up>');
     await component.handleInput?.(' ');
-    assert.equal(renderRequests, 1);
-    assert.equal(view.items[0].enabled, false);
-    await component.handleInput?.('\x1B');
+    assert.equal(view.items.find((item) => item.label === 'alpha')?.enabled, false);
+    assert.equal(renderRequests, 4);
+    await component.handleInput?.('<cancel>');
     assert.equal(doneCalls, 1);
+
+    const fallbackView = await buildResourceToggleView(
+      {
+        getSkills: (): SkillDescriptor[] => [alphaSkill, betaSkill],
+        getExtensions: () => [],
+        getAllTools: (): ToolDescriptor[] => [],
+        getCommands: (): CommandDescriptor[] => [],
+      },
+      ctx,
+      { skills: {}, extensions: {} },
+    );
+    const incompatibleKeybindings = {
+      matches(): boolean {
+        throw new Error('incompatible keybinding manager');
+      },
+    };
+    const fallbackComponent = createResourceToggleCustomFactory(fallbackView)({ requestRender: () => { renderRequests += 1; } }, {}, incompatibleKeybindings, () => { doneCalls += 1; });
+    await fallbackComponent.handleInput?.('\x1B[B');
+    await fallbackComponent.handleInput?.(' ');
+    assert.equal(fallbackView.items.find((item) => item.label === 'beta')?.enabled, false);
+    assert.equal(renderRequests, 6);
   });
 }
 

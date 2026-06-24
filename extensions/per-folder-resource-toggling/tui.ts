@@ -72,6 +72,8 @@ export interface ExtensionDescriptor {
   sourceInfo?: string | Record<string, unknown> | null;
 }
 
+type SkillDescriptorWithMetadata = SkillDescriptor & Record<string, unknown>;
+
 export type ResourceToggleItemKind = 'skill' | 'extension';
 
 export interface ResourceToggleViewItem {
@@ -125,7 +127,7 @@ export async function openResourceToggleTui(
 }
 
 export function createResourceToggleCustomFactory(view: ResourceToggleView): ResourceToggleCustomFactory {
-  return (tui, theme, _keybindings, done) => new ResourceToggleComponentAdapter(view, tui, theme, done);
+  return (tui, theme, keybindings, done) => new ResourceToggleComponentAdapter(view, tui, theme, keybindings, done);
 }
 
 class ResourceToggleComponentAdapter implements ResourceToggleComponent {
@@ -133,17 +135,20 @@ class ResourceToggleComponentAdapter implements ResourceToggleComponent {
   private view: ResourceToggleView;
   private tui: { requestRender?(): void };
   private theme: ResourceToggleTheme;
+  private keybindings: unknown;
   private done: (value?: unknown) => void;
 
   constructor(
     view: ResourceToggleView,
     tui: { requestRender?(): void },
     theme: ResourceToggleTheme,
+    keybindings: unknown,
     done: (value?: unknown) => void,
   ) {
     this.view = view;
     this.tui = tui;
     this.theme = theme;
+    this.keybindings = keybindings;
     this.done = done;
   }
 
@@ -173,19 +178,19 @@ class ResourceToggleComponentAdapter implements ResourceToggleComponent {
   invalidate(): void {}
 
   async handleInput(data: string): Promise<boolean> {
-    if (matchesInput(data, ['escape', 'q'])) {
+    if (matchesInput(data, ['cancel', 'q'], this.keybindings)) {
       this.done(undefined);
       return true;
     }
-    if (matchesInput(data, ['up'])) {
+    if (matchesInput(data, ['up'], this.keybindings)) {
       this.moveSelection(-1);
       return true;
     }
-    if (matchesInput(data, ['down'])) {
+    if (matchesInput(data, ['down'], this.keybindings)) {
       this.moveSelection(1);
       return true;
     }
-    if (matchesInput(data, ['space', 'enter'])) {
+    if (matchesInput(data, ['confirm', 'space', 'enter'], this.keybindings)) {
       const item = this.view.items[this.selectedIndex];
       if (item?.toggleable) {
         await this.view.onToggle(item.id, !item.enabled);
@@ -217,23 +222,86 @@ class ResourceToggleComponentAdapter implements ResourceToggleComponent {
   }
 }
 
-function matchesInput(data: string, keys: string[]): boolean {
-  return keys.some((key) => {
-    switch (key) {
-      case 'enter':
-        return data === '\r' || data === '\n' || data === '\x1BOM';
-      case 'escape':
-        return data === '\x1B';
-      case 'space':
-        return data === ' ';
-      case 'up':
-        return data === '\x1B[A';
-      case 'down':
-        return data === '\x1B[B';
-      default:
-        return data === key;
+function matchesInput(data: string, keys: string[], keybindings: unknown): boolean {
+  return keys.some((key) => matchesKeybinding(data, key, keybindings) || matchesRawFallback(data, key));
+}
+
+function matchesKeybinding(data: string, key: string, keybindings: unknown): boolean {
+  if (!keybindings || typeof keybindings !== 'object') {
+    return false;
+  }
+
+  const matcher = (keybindings as { matches?: unknown }).matches;
+  if (typeof matcher !== 'function') {
+    return false;
+  }
+
+  for (const binding of keybindingCandidates(key, keybindings)) {
+    try {
+      if (matcher.call(keybindings, data, binding)) {
+        return true;
+      }
+    } catch {
+      // Ignore incompatible keybinding manager shapes and keep deterministic raw fallbacks.
     }
-  });
+  }
+  return false;
+}
+
+function keybindingCandidates(key: string, keybindings: unknown): unknown[] {
+  const bindingName = keybindingNameForInput(key);
+  const candidates: unknown[] = [bindingName, key];
+  if (!keybindings || typeof keybindings !== 'object') {
+    return candidates;
+  }
+
+  const source = keybindings as Record<string, unknown>;
+  for (const accessorName of ['get', 'getKeybinding', 'resolve']) {
+    const accessor = source[accessorName];
+    if (typeof accessor !== 'function') {
+      continue;
+    }
+    try {
+      candidates.unshift(accessor.call(keybindings, bindingName));
+    } catch {
+      // Best-effort compatibility with Pi keybinding managers.
+    }
+  }
+  candidates.unshift(source[bindingName], source[key]);
+  return candidates.filter((candidate) => candidate !== undefined && candidate !== null);
+}
+
+function keybindingNameForInput(key: string): string {
+  switch (key) {
+    case 'up':
+      return 'tui.select.up';
+    case 'down':
+      return 'tui.select.down';
+    case 'confirm':
+      return 'tui.select.confirm';
+    case 'cancel':
+      return 'tui.select.cancel';
+    default:
+      return key;
+  }
+}
+
+function matchesRawFallback(data: string, key: string): boolean {
+  switch (key) {
+    case 'confirm':
+    case 'enter':
+      return data === '\r' || data === '\n' || data === '\x1BOM';
+    case 'cancel':
+      return data === '\x1B' || data === 'q';
+    case 'space':
+      return data === ' ';
+    case 'up':
+      return data === '\x1B[A' || data === 'up';
+    case 'down':
+      return data === '\x1B[B' || data === 'down';
+    default:
+      return data === key;
+  }
 }
 
 function wrapLine(line: string, width: number): string[] {
@@ -295,7 +363,7 @@ async function listSkillItems(
   ctx: ResourceToggleCommandContext,
   state: ResourceToggleState,
 ): Promise<ResourceToggleViewItem[]> {
-  const skills = uniqueSkillDescriptors(await collectSkills(pi, ctx), state);
+  const skills = uniqueSkillDescriptors(await collectSkills(pi, ctx));
   return skills.map((skill) => {
     const id = skill.filePath || skill.name;
     return {
@@ -368,17 +436,48 @@ async function safeList<T>(read: () => T[] | Promise<T[]> | undefined): Promise<
   }
 }
 
-function uniqueSkillDescriptors(skills: SkillDescriptor[], state: ResourceToggleState): SkillDescriptor[] {
+function uniqueSkillDescriptors(skills: SkillDescriptor[]): SkillDescriptor[] {
   const byId = new Map<string, SkillDescriptor>();
   for (const skill of skills) {
+    if (isBuiltInSkillDescriptor(skill)) {
+      continue;
+    }
     byId.set(skill.filePath || skill.name, skill);
   }
-  for (const id of Object.keys(state.skills)) {
-    if (!byId.has(id)) {
-      byId.set(id, { name: id, filePath: id });
-    }
-  }
   return [...byId.values()].sort((left, right) => left.name.localeCompare(right.name));
+}
+
+function isBuiltInSkillDescriptor(skill: SkillDescriptor): boolean {
+  const descriptor = skill as SkillDescriptorWithMetadata;
+  if (['builtin', 'built-in', 'core'].some((value) => hasMetadataValue(descriptor, value))) {
+    return true;
+  }
+  if (['builtin', 'builtIn', 'isBuiltin', 'isBuiltIn'].some((key) => descriptor[key] === true)) {
+    return true;
+  }
+
+  const pathValues = [descriptor.filePath, descriptor.baseDir, descriptor.sourceInfo, descriptor.source, descriptor.sourceType, descriptor.kind, descriptor.packageName]
+    .flatMap(extractStringValues)
+    .map((value) => value.toLowerCase());
+
+  return pathValues.some((value) => /(^|[\/])(@?pi|pi)([\/](core|built[-_]?in|system))?[\/]skills[\/]/i.test(value)
+    || /(^|[\/])(core|built[-_]?in|system)([\/].*)?skills[\/]/i.test(value)
+    || /(^|[\/])(core|built[-_]?in|system)[-_]?skills([\/]|$)/i.test(value)
+    || /(^|[\/])skills[\/](core|built[-_]?in|system)([\/]|$)/i.test(value));
+}
+
+function hasMetadataValue(descriptor: SkillDescriptorWithMetadata, expected: string): boolean {
+  return ['source', 'sourceType', 'kind', 'type', 'origin'].some((key) => descriptor[key] === expected);
+}
+
+function extractStringValues(value: unknown): string[] {
+  if (typeof value === 'string') {
+    return [value];
+  }
+  if (!value || typeof value !== 'object') {
+    return [];
+  }
+  return Object.values(value as Record<string, unknown>).filter((entry): entry is string => typeof entry === 'string');
 }
 
 function extensionIdFromDescriptor(extension: ExtensionDescriptor): string | null {
